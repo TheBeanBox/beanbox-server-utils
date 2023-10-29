@@ -120,3 +120,9 @@ net.Receive("bsu_perms", function(_, ply)
 		end
 	end
 end)
+
+function BSU.CleanupProps(id)
+	for _, ent in ipairs(BSU.GetOwnerEntities(id)) do
+		ent:Remove()
+	end
+end

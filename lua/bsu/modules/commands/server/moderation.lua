@@ -535,3 +535,18 @@ end)
 hook.Add("PlayerCanHearPlayersVoice", "BSU_PlayerGag", function(_, speaker)
 	if speaker.bsu_gagged then return false end
 end)
+
+BSU.SetupCommand("cleanprops", function(cmd)
+	cmd:SetDescription("Cleans up a player's props")
+	cmd:SetCategory("moderation")
+	cmd:SetAccess(BSU.CMD_ADMIN)
+	cmd:SetFunction(function(self, _, target)
+
+		BSU.CleanupProps(target:UserID())
+
+		self:BroadcastActionMsg("%caller% cleaned up %target%'s props", {
+			target = target
+		})
+	end)
+	cmd:AddPlayerArg("target", { check = true })
+end)

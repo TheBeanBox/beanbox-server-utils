@@ -1,17 +1,11 @@
 -- base/server/pp.lua
 
-local function cleanupProps(id)
-	for _, ent in ipairs(BSU.GetOwnerEntities(id)) do
-		ent:Remove()
-	end
-end
-
 hook.Add("BSU_PlayerBanned", "BSU_CleanupBannedPlayerProps", function(ply)
-	cleanupProps(ply:UserID())
+	BSU.CleanupProps(ply:UserID())
 end)
 
 hook.Add("BSU_PlayerKicked", "BSU_CleanupKickedPlayerProps", function(ply)
-	cleanupProps(ply:UserID())
+	BSU.CleanupProps(ply:UserID())
 end)
 
 hook.Add("PlayerDisconnected", "BSU_HandleDisconnectedPlayerProps", function(ply)
@@ -29,7 +23,7 @@ hook.Add("PlayerDisconnected", "BSU_HandleDisconnectedPlayerProps", function(ply
 
 	-- cleanup after some time
 	timer.Create("BSU_RemoveDisconnected_" .. id, GetConVar("bsu_cleanup_time"):GetFloat(), 1, function()
-		cleanupProps(id)
+		BSU.CleanupProps(ply:UserID())
 	end)
 
 	-- clear permissions granted to disconnected players
