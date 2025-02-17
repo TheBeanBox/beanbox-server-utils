@@ -72,6 +72,8 @@ hook.Add("player_changename", "BSU_UpdatePlayerDataName", function(data)
 	BSU.SetPlayerData(Player(data.userid), { name = data.newname })
 end)
 
+util.AddNetworkString("bsu_client_info")
+
 -- update pdata with client data
 local function updateClientInfo(_, ply)
 	local os = net.ReadUInt(2)

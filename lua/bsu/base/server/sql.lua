@@ -20,8 +20,9 @@ BSU.SQLCreateTable(BSU.SQL_TEAMS, string.format(
 	Groups
 
 	id        - (text)         id of the group
-	team      - (int)          id of the team the group should use
-	usergroup - (text)         usergroup players under this group should be given (ex: "admin", "superadmin") (default: "user")
+	team      - (int)          id of the team this group should use
+	usergroup - (text)         usergroup this group should use (ex: "user", "admin", "superadmin") (default: "user")
+	cantarget - (text or NULL) filter for who this group can target with commands (default: "*" for everyone)
 	inherit   - (text or NULL) id of the group this group should inherit the properties of
 ]]
 
@@ -29,7 +30,8 @@ BSU.SQLCreateTable(BSU.SQL_GROUPS, string.format(
 	[[
 		id TEXT PRIMARY KEY,
 		team INTEGER NOT NULL REFERENCES %s(id),
-		usergroup TEXT NOT NULL DEFAULT user,
+		usergroup TEXT NOT NULL,
+		cantarget TEXT NOT NULL,
 		inherit TEXT REFERENCES %s(id)
 	]],
 		BSU.SQLEscIdent(BSU.SQL_TEAMS),
@@ -140,6 +142,24 @@ BSU.SQLCreateTable(BSU.SQL_GROUP_LIMITS, string.format(
 		name TEXT NOT NULL,
 		amount INTEGER NOT NULL,
 		UNIQUE (groupid, name)
+	]],
+		BSU.SQLEscIdent(BSU.SQL_GROUPS)
+))
+
+--[[
+	Command Targets
+
+	groupid - (text) id of the group
+	cmd     - (text) name of the command
+	filter  - (text) filter for who can be targeted with this command
+]]
+
+BSU.SQLCreateTable(BSU.SQL_CMD_TARGETS, string.format(
+	[[
+		groupid TEXT NOT NULL REFERENCES %s(id),
+		cmd TEXT NOT NULL,
+		filter TEXT NOT NULL,
+		UNIQUE (groupid, cmd)
 	]],
 		BSU.SQLEscIdent(BSU.SQL_GROUPS)
 ))

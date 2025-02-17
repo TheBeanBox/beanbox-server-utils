@@ -1,5 +1,25 @@
 -- lib/server/util.lua
 
+util.AddNetworkString("bsu_rpc")
+
+function BSU.ClientRPC(plys, func, ...)
+	net.Start("bsu_rpc")
+	net.WriteString(func)
+
+	local args = { ... }
+	local len = math.min(#args, 2 ^ 8 - 1)
+	net.WriteUInt(len, 8) -- only 255 args
+	for i = 1, len do
+		net.WriteType(args[i])
+	end
+
+	if plys then
+		net.Send(plys)
+	else
+		net.Broadcast()
+	end
+end
+
 function BSU.LoadModules(dir)
 	dir = dir or BSU.DIR_MODULES
 

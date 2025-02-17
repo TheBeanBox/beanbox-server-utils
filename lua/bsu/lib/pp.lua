@@ -13,6 +13,13 @@ local WORLD_ID = "18446744073709551615" -- owner id for the world
 local OWNER_INFO_MAX = 2 -- max keys in owner info, currently only storing name and userid (update this if more are added)
 local OWNER_ENTS_MAX = 2 ^ 13 - 1 -- max ents per owner
 
+if SERVER then
+	util.AddNetworkString("bsu_init_owners")
+	util.AddNetworkString("bsu_owner_info")
+	util.AddNetworkString("bsu_set_owner")
+	util.AddNetworkString("bsu_clear_owner")
+end
+
 local function sendOwnerUpdates()
 	if next(infoUpdates) ~= nil then
 		for id, info in pairs(infoUpdates) do

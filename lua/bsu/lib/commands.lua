@@ -18,7 +18,7 @@ local function parseArgs(input, inclusive)
 			local char = groupChars[i]
 			local pos = string.find(str, char, 1, true)
 			if pos then
-				table.insert(foundGroupChars, { char, pos })
+				foundGroupChars[#foundGroupChars + 1] = { char, pos }
 			end
 		end
 
@@ -69,42 +69,132 @@ local function parseArgs(input, inclusive)
 	return newArgs
 end
 
--- returns table of players via prefixed command argument
--- returns empty table if failed to retrieve (ex: invalid player name, invalid player steamid, invalid group name, or no prefixes matched)
-local function parsePlayerArg(user, str)
-	str = string.Trim(parseArgs(str or "")[1] or "")
-	if str == "" then return {} end
-
-	local strs = string.Split(str, ",")
-	if #strs > 1 then
-		local list = {} -- lookup table of players so we don't get duplicates
-		for _, v in ipairs(strs) do
-			local result = parsePlayerArg(user, v)
-			for _, vv in ipairs(result) do
-				list[vv] = true
+local playerArgPrefixes = {
+	["^"] = function(str, pre, caller) -- the caller
+		if str == pre then return { caller } end
+	end,
+	["*"] = function(str, pre) -- all players
+		if str == pre then return player.GetAll() end
+	end,
+	["@"] = function(str, pre, caller) -- the player the caller is looking at
+		if str ~= pre then return end
+		if not caller:IsValid() then return end
+		local ent = caller:GetEyeTrace().Entity
+		if IsValid(ent) and ent:IsPlayer() then return { ent } end
+	end,
+	["$"] = function(str) -- the player with the userid or steamid
+		local val = string.sub(str, 2)
+		local ply = Player(tonumber(val) or -1)
+		if ply:IsValid() then return { ply } end
+		if not BSU.IsValidSteamID(val) then return end
+		ply = player.GetBySteamID64(BSU.ID64(val))
+		if IsValid(ply) and ply:IsPlayer() then return { ply } end
+	end,
+	["#"] = function(str) -- all players in the group
+		local val = string.lower(string.sub(str, 2))
+		local found = {}
+		for _, ply in player.Iterator() do
+			if val == BSU.GetPlayerData(ply).groupid then
+				found[#found + 1] = ply
 			end
 		end
-
+		return found
+	end,
+	["%"] = function(str) -- all players in the group (with inheritance)
+		local val = string.lower(string.sub(str, 2))
+		local groups = { [val] = true }
 		local found = {}
-		for k, _ in pairs(list) do
-			table.insert(found, k)
+		for _, ply in player.Iterator() do
+			local groupid = BSU.GetPlayerData(ply).groupid
+			if groups[groupid] == nil then
+				while true do
+					local inherit = BSU.GetGroupInherit(groupid)
+					if not inherit then
+						groups[groupid] = false
+						break
+					end
+					if groups[inherit] then
+						groups[groupid] = true
+						break
+					end
+					groupid = inherit
+				end
+			end
+			if groups[groupid] then
+				found[#found + 1] = ply
+			end
+		end
+		return found
+	end
+}
+
+local function parsePlayerArgPrefix(caller, str)
+	local pre = string.sub(str, 1, 1)
+
+	-- parse argument but take opposite of result
+	if pre == "!" then
+		local val = string.sub(str, 2)
+		local result = parsePlayerArgPrefix(caller, val)
+
+		-- create lookup table from result
+		local tbl = {}
+		for _, ply in ipairs(result) do
+			tbl[ply] = true
+		end
+
+		-- get all players not in the lookup table
+		local found = {}
+		for _, ply in player.Iterator() do
+			if not tbl[ply] then
+				found[#found + 1] = ply
+			end
 		end
 		return found
 	end
 
-	local plys = player.GetAll()
+	local func = playerArgPrefixes[pre]
+	return func and func(str, pre, caller) or {}
+end
 
-	do-- check if the argument matches player names
+-- returns table of players found using a prefixed command argument
+local function parsePlayerArg(caller, str)
+	str = parseArgs(str)[1]
+	if not str then return {} end
+	str = string.Trim(str)
+	if str == "" then return {} end
+
+	-- if seperated by comma, parse each string and merge results
+	do
+		local strs = string.Split(str, ",")
+		if #strs > 1 then
+			local tbl = {} -- lookup table of players so we don't get duplicates
+			for _, s in ipairs(strs) do
+				local result = parsePlayerArg(caller, s)
+				for _, ply in ipairs(result) do
+					tbl[ply] = true
+				end
+			end
+
+			local found = {}
+			for ply, _ in pairs(tbl) do
+				found[#found + 1] = ply
+			end
+			return found
+		end
+	end
+
+	-- check if the argument matches any player names
+	do
 		local find = string.lower(str)
 		local found = {}
 
-		for _, v in ipairs(plys) do
-			local name = string.lower(v:GetName())
+		for _, ply in player.Iterator() do
+			local name = string.lower(ply:Nick())
 			if name == find then -- found exact name
-				return { v }
+				return { ply }
 			elseif #find >= 3 then -- must be a minimum of 3 characters for partial search
 				if string.find(name, find, 1, true) then
-					table.insert(found, v)
+					found[#found + 1] = ply
 				end
 			end
 		end
@@ -114,64 +204,8 @@ local function parsePlayerArg(user, str)
 		end
 	end
 
-	if str == "^" then -- player who ran the command
-		if user:IsValid() then -- user can be NULL if executed from the server console
-			return { user }
-		end
-	elseif str == "?" then -- random player
-		return { plys[math.random(1, #plys)] }
-	elseif str == "*" then -- wildcard (all players)
-		return plys
-	else
-		local pre = string.sub(str, 1, 1)
-		local val = string.sub(str, 2)
-		if pre == "@" then -- player by eye trace
-			if user:IsValid() then
-				local ent = user:GetEyeTrace().Entity
-				if ent:IsPlayer() then
-					return { ent }
-				end
-			end
-		elseif pre == "$" then -- player by userid or steamid
-			local ply = Player(tonumber(val) or -1)
-			if ply:IsValid() then
-				return { ply }
-			elseif BSU.IsValidSteamID(val) then
-				ply = player.GetBySteamID64(BSU.ID64(val))
-				if ply ~= false and ply:IsValid() then
-					return { ply }
-				end
-			end
-		elseif pre == "#" then -- players by group id
-			val = string.lower(val)
-			local found = {}
-			for _, v in ipairs(plys) do
-				if val == BSU.GetPlayerData(v).groupid then
-					table.insert(found, v)
-				end
-			end
-			return found
-		elseif pre == "!" then -- opposite of next prefix
-			local result = parsePlayerArg(user, val)
-
-			-- create lookup table from result
-			local list = {}
-			for _, v in ipairs(result) do
-				list[v] = true
-			end
-
-			-- get all players not in the lookup table
-			local found = {}
-			for _, v in ipairs(plys) do
-				if not list[v] then
-					table.insert(found, v)
-				end
-			end
-			return found
-		end
-	end
-
-	return {}
+	-- check if the argument has a special prefix
+	return parsePlayerArgPrefix(caller, str)
 end
 
 -- holds command objects
@@ -292,7 +326,6 @@ function objCommand.AddPlayersArg(self, name, data)
 		filter = data.filter or false
 	})
 end
-
 
 -- create a command object
 function BSU.Command(name, desc, category, access, silent, validcaller, func)
@@ -718,157 +751,202 @@ function objCmdHandler.GetSilent(self)
 end
 
 if SERVER then
-	local function checkCanTargetSelf(steamid, cmd)
-		return BSU.CheckPlayerPrivilege(steamid, BSU.PRIV_TARGET, cmd.name .. " ^")
-	end
-
-	local function checkCanTargetGroup(steamid, cmd, groupid)
-		local check = BSU.CheckPlayerPrivilege(steamid, BSU.PRIV_TARGET, cmd.name .. " #" .. groupid)
-		if check ~= nil then return check end
-
-		-- check with inherited group
-		local inherit = BSU.GetGroupInherit(groupid)
-		if inherit then
-			return checkCanTargetGroup(steamid, cmd, inherit)
+	local targetPrefixes = {
+		["^"] = function(str, pre, steamid, targetid) -- if self
+			return str == pre and steamid == targetid
+		end,
+		["*"] = function(str, pre) -- always
+			return str == pre
+		end,
+		["$"] = function(str, _, _, targetid) -- if matches targetid
+			local val = string.sub(str, 2)
+			return targetid == val
+		end,
+		["#"] = function(str, _, _, targetid) -- if targetid in group
+			local data = BSU.GetPlayerDataBySteamID(targetid)
+			if not data then return false end
+			local val = string.lower(string.sub(str, 2))
+			print(targetid, data.groupid, val)
+			return data.groupid == val
+		end,
+		["%"] = function(str, _, _, targetid) -- if targetid in group (with inheritance)
+			local data = BSU.GetPlayerDataBySteamID(targetid)
+			if not data then return false end
+			local val = string.lower(string.sub(str, 2))
+			local groupid = data.groupid
+			if groupid == val then return true end
+			while true do
+				local inherit = BSU.GetGroupInherit(groupid)
+				if not inherit then return false end
+				if inherit == val then return true end
+				groupid = inherit
+			end
 		end
-	end
+	}
 
-	local function checkCanTargetAnyone(steamid, cmd)
-		-- note: it's important when checking target privilege that no wildcard checking is used as the "*" syntax will conflict
-		return BSU.CheckPlayerPrivilege(steamid, BSU.PRIV_TARGET, cmd.name .. " *")
-	end
+	local function parseTargetPrefix(steamid, targetid, str)
+		local pre = string.sub(str, 1, 1)
 
-	local function inheritsFrom(groupid, groupid2)
-		local inherit = BSU.GetGroupInherit(groupid2)
-		if not inherit then return false end
-		if inherit == groupid then return true end
-		return inheritsFrom(groupid, inherit)
+		-- parse argument but take opposite of result
+		if pre == "!" then
+			local val = string.sub(str, 2)
+			return not parseTargetPrefix(steamid, targetid, val)
+		end
+
+		local func = targetPrefixes[pre]
+		return func and func(str, pre, steamid, targetid) or false
 	end
 
 	function objCmdHandler.CheckCanTargetSteamID(self, targetid, fail)
+		local caller = self.caller
+		if not caller:IsValid() or caller:IsSuperAdmin() then return true end
+
 		targetid = BSU.ID64(targetid)
-		if not self.caller:IsValid() or self.caller:IsSuperAdmin() then return true end
-		local callerid = self.caller:SteamID64()
 
-		-- check can target self
-		if callerid == targetid then
-			local check = checkCanTargetSelf(callerid, self.cmd)
-			if check ~= nil then
-				if not check and fail then error("You cannot select this target") end
-				return check
-			end
-		end
+		local target = player.GetBySteamID64(targetid)
+		if IsValid(target) then return self:CheckCanTarget(target, fail) end
 
-		-- check can target group
-		local targetData = BSU.GetPlayerDataBySteamID(targetid)
-
-		if targetData then
-			local check = checkCanTargetGroup(callerid, self.cmd, targetData.groupid)
-			if check ~= nil then
-				if not check and fail then error("You cannot select this target") end
-				return check
-			end
-		end
-
-		-- check can target anyone
-		local check = checkCanTargetAnyone(callerid, self.cmd)
-		if check ~= nil then
-			if not check and fail then error("You cannot select this target") end
-			return check
-		end
-
-		-- no target privs were found, use the default behavior (allow if caller's group inherits at all from the target's group)
-
-		if not targetData then -- no data for this steamid so they probably have never joined this server
-			if fail then error("You cannot select this target") end
+		if hook.Run("BSU_OnCommandCheckCanTargetSteamID", self, targetid) == false then
+			if fail then error("You cannot target this player") end
 			return false
 		end
 
-		local callerData = BSU.GetPlayerDataBySteamID(callerid)
+		local cantarget = BSU.GetGroupCanTarget(BSU.GetPlayerData(caller).groupid, self.cmd.name)
 
-		if not callerData then -- every player on the server should be registered so this should never happen
-			if fail then error("You cannot select this target") end
-			return false
+		local steamid = caller:SteamID64()
+
+		-- parse prefix strings until one of them allows targeting targetid
+		local strs = string.Split(cantarget, ",")
+		for _, s in ipairs(strs) do
+			local result = parseTargetPrefix(steamid, targetid, s)
+			if result then return true end
 		end
 
-		local allow = callerData.groupid == targetData.groupid or inheritsFrom(targetData.groupid, callerData.groupid)
-		if not allow and fail then error("You cannot select this target") end
-		return allow
-	end
-
-	function objCmdHandler.CheckCanTarget(self, target, fail)
-		if not self.caller:IsValid() or self.caller:IsSuperAdmin() then return true end -- is server console or superadmin
-		do
-			local allow = hook.Run("BSU_OnCommandCheckCanTarget", self, target)
-			if allow ~= nil then
-				if allow then
-					return true
-				elseif fail then
-					error("You cannot select this target")
-				end
-				return false
-			end
-		end
-		return self:CheckCanTargetSteamID(target:SteamID64(), fail)
+		if fail then error("You cannot target this player") end
+		return false
 	end
 
 	function objCmdHandler.FilterTargets(self, targets, fail)
-		local tbl = {}
-		for _, tar in ipairs(targets) do
-			if tar:IsValid() and self:CheckCanTarget(tar) then
-				table.insert(tbl, tar)
+		local caller = self.caller
+
+		local num = #targets
+		local found = {}
+
+		-- if console or superadmin, return all targets
+		if not caller:IsValid() or caller:IsSuperAdmin() then
+			for i = 1, num do
+				found[#found + 1] = targets[i]
+			end
+			return found
+		end
+
+		local remaining = {}
+
+		for i = 1, num do
+			local ply = targets[i]
+			-- check if a hook wants to override target filtering
+			local allow = hook.Run("BSU_OnCommandCheckCanTarget", self, ply)
+			if allow ~= nil then
+				if allow then found[#found + 1] = ply end
+			else
+				remaining[ply] = true
 			end
 		end
-		if next(tbl) == nil and fail then
-			error("You cannot select " .. (#targets == 1 and "this target" or "these targets"))
-		end
-		return tbl
-	end
 
-	local function formatArg(ply, target, arg)
-		local vars = {}
-		if istable(arg) then
-			local totalPlys = 0
-			for _, v in ipairs(arg) do
-				if isentity(v) and v:IsPlayer() then
-					totalPlys = totalPlys + 1
+		if next(remaining) == nil then
+			if fail and next(found) == nil then
+				error("You cannot select " .. (num == 1 and "this target" or "these targets"))
+			end
+			return found
+		end
+
+		local cantarget = BSU.GetGroupCanTarget(BSU.GetPlayerData(caller).groupid, self.cmd.name)
+
+		-- parse prefix strings until the remaining are found
+		local strs = string.Split(cantarget, ",")
+		for _, s in ipairs(strs) do
+			local result = parsePlayerArgPrefix(caller, s)
+			for _, ply in ipairs(result) do
+				if remaining[ply] then
+					remaining[ply] = nil
+					found[#found + 1] = ply
+					if next(remaining) == nil then
+						return found
+					end
 				end
 			end
-			if totalPlys > 1 and totalPlys == player.GetCount() then
-				table.Add(vars, { BSU.CLR_EVERYONE, "Everyone" })
+		end
+
+		if fail and next(found) == nil then
+			error("You cannot select " .. (num == 1 and "this target" or "these targets"))
+		end
+		return found
+	end
+
+	function objCmdHandler.CheckCanTarget(self, target, fail)
+		return next(self:FilterTargets({ target }, fail)) ~= nil
+	end
+
+	local function addColoredText(tbl, clr, str)
+		local num = #tbl
+		tbl[num + 1] = clr
+		tbl[num + 2] = str
+	end
+
+	local function addFormattedArg(tbl, ply, target, arg)
+		if istable(arg) then
+			local num = 0
+			for _, v in ipairs(arg) do
+				if isentity(v) and v:IsPlayer() then
+					num = num + 1
+				end
+			end
+			if num > 1 and num == player.GetCount() then
+				addColoredText(tbl, BSU.CLR_EVERYONE, "Everyone")
 			else
 				for k, v in ipairs(arg) do -- expect table arg to be sequential
 					if istable(v) then continue end -- ignore tables in table arg (can cause weird formatting or infinite recursion)
 					if k > 1 then
-						table.Add(vars, { BSU.CLR_TEXT, k < #arg and ", " or (#arg > 2 and ", and " or " and ") })
+						addColoredText(tbl, BSU.CLR_TEXT, k < #arg and ", " or (#arg > 2 and ", and " or " and "))
 					end
-					table.Add(vars, formatArg(ply, target, v))
+					addFormattedArg(tbl, ply, target, v)
 				end
 			end
 		elseif isentity(arg) then
 			if arg:IsPlayer() then
-				table.Add(vars, arg == ply and (arg == target and { BSU.CLR_SELF, "Yourself" } or { BSU.CLR_SELF, "Themself" }) or { team.GetColor(arg:Team()), arg:Nick() })
+				if arg == ply then
+					addColoredText(tbl, BSU.CLR_SELF, arg == target and "Yourself" or "Themself")
+				else
+					addColoredText(tbl, team.GetColor(arg:Team()), arg:Nick())
+				end
 			else
-				table.Add(vars, { BSU.CLR_MISC, tostring(arg) })
+				addColoredText(tbl, BSU.CLR_MISC, tostring(arg))
 			end
 		else
-			table.Add(vars, { BSU.CLR_PARAM, tostring(arg) })
+			addColoredText(tbl, BSU.CLR_PARAM, tostring(arg))
 		end
-		return vars
 	end
 
 	function objCmdHandler.FormatMsg(self, ply, target, msg, args)
-		local vars = {}
+		local tbl = {}
 		local pos = 1
 
 		for pre, name in string.gmatch(msg, "(.-)%%([%w_]+)%%") do
-			table.Add(vars, { BSU.CLR_TEXT, pre })
+			addColoredText(tbl, BSU.CLR_TEXT, pre)
 
 			local arg = args[name]
 			if arg ~= nil then
-				table.Add(vars, formatArg(ply, target, arg))
+				addFormattedArg(tbl, ply, target, arg)
 			elseif name == "caller" then
-				table.Add(vars, ply:IsValid() and (ply == target and { BSU.CLR_SELF, "You" } or { team.GetColor(ply:Team()), ply:Nick() }) or { BSU.CLR_CONSOLE, "(Console)" })
+				if ply:IsValid() then
+					if ply == target then
+						addColoredText(tbl, BSU.CLR_SELF, "You")
+					else
+						addColoredText(tbl, team.GetColor(ply:Team()), ply:Nick())
+					end
+				else
+					addColoredText(tbl, BSU.CLR_CONSOLE, "(Console)")
+				end
 			end
 
 			pos = pos + #pre + #name + 2
@@ -876,10 +954,10 @@ if SERVER then
 
 		local last = string.sub(msg, pos)
 		if #last > 0 then -- add last part of the msg
-			table.Add(vars, { BSU.CLR_TEXT, last })
+			addColoredText(tbl, BSU.CLR_TEXT, last)
 		end
 
-		return unpack(vars)
+		return unpack(tbl)
 	end
 
 	-- send a formatted message to players (expects a player or NULL entity, or a table that can include both)

@@ -3,6 +3,8 @@
 -- holds prop protection perms
 BSU._perms = BSU._perms or {}
 
+util.AddNetworkString("bsu_perms")
+
 function BSU.SetPermission(plyID, tarID, perm)
 	plyID = BSU.ID64(plyID)
 	tarID = BSU.ID64(tarID)

@@ -28,7 +28,7 @@ end
 
 function BSU.SafeRunCommand(name, argStr, silent)
 	if not BSU.GetCommandByName(name) then BSU.SendConsoleMsg(color_white, "Unknown BSU command: '" .. name .. "'") return end
-	BSU.RunCommand(name, argStr, silent)
+	BSU.RunCommand(name, string.sub(argStr or "", 1, 255), silent) -- limit arg string length
 end
 
 function BSU.SendRunCommand(name, argStr, silent)

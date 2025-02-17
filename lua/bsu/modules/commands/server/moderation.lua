@@ -13,7 +13,7 @@ BSU.SetupCommand("ban", function(cmd)
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_ADMIN)
 	cmd:SetFunction(function(self, caller, target, duration, reason)
-		if caller:IsValid() and not caller:IsSuperAdmin() then
+		if caller:IsValid() then
 			local ban = BSU.GetBanStatus(target:SteamID64())
 			if ban and (not ban.admin or not self:CheckCanTargetSteamID(ban.admin)) then
 				error("You don't have permission to overwrite this player's ban")
@@ -41,7 +41,7 @@ BSU.SetupCommand("banid", function(cmd)
 	cmd:SetFunction(function(self, caller, steamid, duration, reason)
 		steamid = BSU.ID64(steamid)
 
-		if caller:IsValid() and not caller:IsSuperAdmin() then
+		if caller:IsValid() then
 			self:CheckCanTargetSteamID(steamid, true) -- make sure caller is allowed to target this person
 			local ban = BSU.GetBanStatus(steamid)
 			if ban and (not ban.admin or not self:CheckCanTargetSteamID(ban.admin)) then
@@ -91,8 +91,11 @@ BSU.SetupCommand("banip", function(cmd)
 	cmd:SetSilent(true)
 	cmd:SetFunction(function(self, caller, ip, duration, reason)
 		local data = BSU.GetPlayerDataByIPAddress(ip) -- find any players associated with this ip
-		for i = 1, #data do -- make sure caller is allowed to target all of these players
-			self:CheckCanTargetSteamID(data[i].steamid, true)
+
+		if caller:IsValid() then
+			for i = 1, #data do -- make sure caller is allowed to target all of these players
+				self:CheckCanTargetSteamID(data[i].steamid, true)
+			end
 		end
 
 		BSU.BanIP(ip, reason, duration, caller:IsValid() and caller:SteamID64() or nil)
@@ -120,7 +123,7 @@ BSU.SetupCommand("unban", function(cmd)
 	cmd:SetFunction(function(self, caller, steamid)
 		steamid = BSU.ID64(steamid)
 
-		if caller:IsValid() and not caller:IsSuperAdmin() then
+		if caller:IsValid() then
 			local ban = BSU.GetBanStatus(steamid)
 			if ban and (not ban.admin or not self:CheckCanTargetSteamID(ban.admin)) then
 				error("You don't have permission to unban this steamid")
@@ -148,7 +151,7 @@ BSU.SetupCommand("unbanip", function(cmd)
 	cmd:SetFunction(function(self, caller, ip)
 		ip = BSU.Address(ip)
 
-		if caller:IsValid() and not caller:IsSuperAdmin() then
+		if caller:IsValid() then
 			local ban = BSU.GetBanStatus(ip)
 			if ban and (not ban.admin or not self:CheckCanTargetSteamID(ban.admin)) then
 				error("You don't have permission to unban this ip")
@@ -157,7 +160,8 @@ BSU.SetupCommand("unbanip", function(cmd)
 
 		BSU.RevokeIPBan(ip, caller) -- this also checks if the steam id is actually banned
 
-		local data, names = BSU.GetPlayerDataByIPAddress(ip), {}
+		local data = BSU.GetPlayerDataByIPAddress(ip)
+		local names = {}
 		for i = 1, #data do -- get all the names of players associated with this ip
 			table.insert(names, data[i].name)
 		end
@@ -400,18 +404,15 @@ BSU.SetupCommand("resetteam", function(cmd)
 end)
 
 local privs = {
+	misc    = BSU.PRIV_MISC,
 	model   = BSU.PRIV_MODEL,
 	mdl     = BSU.PRIV_MODEL,
 	npc     = BSU.PRIV_NPC,
 	sent    = BSU.PRIV_SENT,
-	entity  = BSU.PRIV_SENT,
 	swep    = BSU.PRIV_SWEP,
-	weapon  = BSU.PRIV_SWEP,
 	tool    = BSU.PRIV_TOOL,
 	command = BSU.PRIV_CMD,
-	cmd     = BSU.PRIV_CMD,
-	target  = BSU.PRIV_TARGET,
-	misc    = BSU.PRIV_MISC,
+	cmd     = BSU.PRIV_CMD
 }
 
 local function getPrivFromName(name)
@@ -419,14 +420,13 @@ local function getPrivFromName(name)
 end
 
 local names = {
+	[BSU.PRIV_MISC]   = "misc",
 	[BSU.PRIV_MODEL]  = "model",
 	[BSU.PRIV_NPC]    = "npc",
-	[BSU.PRIV_SENT]   = "entity",
-	[BSU.PRIV_SWEP]   = "weapon",
+	[BSU.PRIV_SENT]   = "sent",
+	[BSU.PRIV_SWEP]   = "swep",
 	[BSU.PRIV_TOOL]   = "tool",
-	[BSU.PRIV_CMD]    = "command",
-	[BSU.PRIV_TARGET] = "target",
-	[BSU.PRIV_MISC]   = "misc",
+	[BSU.PRIV_CMD]    = "command"
 }
 
 local function getNameFromPriv(priv)
@@ -448,20 +448,25 @@ local groupprivAutocomplete = {
 	"misc",
 }
 
+local function checkGroupisValid(groupid)
+	local group = BSU.GetGroupByID(groupid)
+	if not group then error("Group does not exist") end
+	if group.usergroup == "superadmin" then error("This command cannot be used on groups with the 'superadmin' usergroup") end
+	return group
+end
+
 BSU.SetupCommand("grantgrouppriv", function(cmd)
 	cmd:SetDescription("Set a group to have access to a privilege")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, name, value)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
-		if group.usergroup == "superadmin" then error("Group is in the 'superadmin' usergroup and thus already has access to everything") end
+		checkGroupisValid(groupid)
 
 		local type = getPrivFromName(name)
 		if not type then error("Unknown privilege type") end
 
 		-- command names should be lowercase
-		if type == BSU.PRIV_CMD or type == BSU.PRIV_TARGET then
+		if type == BSU.PRIV_CMD then
 			value = string.lower(value)
 		end
 
@@ -486,15 +491,13 @@ BSU.SetupCommand("revokegrouppriv", function(cmd)
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, name, value)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
-		if group.usergroup == "superadmin" then error("Group is in the 'superadmin' usergroup and thus cannot be restricted from anything") end
+		checkGroupisValid(groupid)
 
 		local type = getPrivFromName(name)
 		if not type then error("Unknown privilege type") end
 
 		-- command names should be lowercase
-		if type == BSU.PRIV_CMD or type == BSU.PRIV_TARGET then
+		if type == BSU.PRIV_CMD then
 			value = string.lower(value)
 		end
 
@@ -515,18 +518,17 @@ BSU.SetupCommand("revokegrouppriv", function(cmd)
 end)
 
 BSU.SetupCommand("cleargrouppriv", function(cmd)
-	cmd:SetDescription("Remove an existing group privilege (will use whatever the default access settings are)")
+	cmd:SetDescription("Clear an existing access override on a group (will use the default access settings)")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, name, value)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
+		checkGroupisValid(groupid)
 
 		local type = getPrivFromName(name)
 		if not type then error("Unknown privilege type") end
 
 		-- command names should be lowercase
-		if type == BSU.PRIV_CMD or type == BSU.PRIV_TARGET then
+		if type == BSU.PRIV_CMD then
 			value = string.lower(value)
 		end
 
@@ -535,8 +537,8 @@ BSU.SetupCommand("cleargrouppriv", function(cmd)
 
 		BSU.RemoveGroupPrivilege(groupid, type, value)
 
-		self:BroadcastActionMsg("%caller% cleared a %kind% privilege on the group %groupid% for %value% (%name%)", {
-			kind = priv.granted and "granting" or "revoking",
+		self:BroadcastActionMsg("%caller% cleared an access override for the group %groupid% that %kind% access to %value% (%name%)", {
+			kind = priv.granted and "granted" or "revoked",
 			groupid = groupid,
 			value = value,
 			name = getNameFromPriv(type),
@@ -548,19 +550,18 @@ BSU.SetupCommand("cleargrouppriv", function(cmd)
 end)
 
 BSU.SetupCommand("setgrouplimit", function(cmd)
-	cmd:SetDescription("Set a group limit")
+	cmd:SetDescription("Set a limit on a group")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, name, amount)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
+		checkGroupisValid(groupid)
 
 		local limit = BSU.SQLSelectByValues(BSU.SQL_GROUP_LIMITS, { groupid = groupid, name = name }, 1)[1]
 		if limit == amount then error("Limit is already set to this amount on this group") end
 
 		BSU.RegisterGroupLimit(groupid, name, amount)
 
-		self:BroadcastActionMsg("%caller% set a limit on the group %groupid% to %amount% (%name%)", {
+		self:BroadcastActionMsg("%caller% set the limit of %name% to %amount% on the group %groupid%", {
 			groupid = groupid,
 			amount = amount,
 			name = name
@@ -572,19 +573,18 @@ BSU.SetupCommand("setgrouplimit", function(cmd)
 end)
 
 BSU.SetupCommand("cleargrouplimit", function(cmd)
-	cmd:SetDescription("Set a group limit")
+	cmd:SetDescription("Clear an existing limit override on a group (will use the default limit settings)")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, name)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
+		checkGroupisValid(groupid)
 
 		local limit = BSU.SQLSelectByValues(BSU.SQL_GROUP_LIMITS, { groupid = groupid, name = name }, 1)[1]
 		if not limit then error("Limit is not set on this group") end
 
 		BSU.RemoveGroupLimit(groupid, name)
 
-		self:BroadcastActionMsg("%caller% cleared a limit on the group %groupid% (%name%)", {
+		self:BroadcastActionMsg("%caller% cleared the limit override of %name% on the group %groupid%", {
 			groupid = groupid,
 			name = name
 		})
@@ -593,15 +593,54 @@ BSU.SetupCommand("cleargrouplimit", function(cmd)
 	cmd:AddStringArg("name")
 end)
 
-BSU.SetupCommand("setcommandlimit", function(cmd)
-	cmd:SetDescription("Set a command limit")
+BSU.SetupCommand("setgroupcmdtarget", function(cmd)
+	cmd:SetDescription("Set a command target filter for a group")
+	cmd:SetCategory("moderation")
+	cmd:SetAccess(BSU.CMD_SUPERADMIN)
+	cmd:SetFunction(function(self, _, groupid, command, filter)
+		checkGroupisValid(groupid)
+
+		BSU.RegisterCommandTarget(groupid, command, filter)
+
+		self:BroadcastActionMsg("%caller% set a command target filter on the group %groupid% (%command% %filter%)", {
+			groupid = groupid,
+			command = command,
+			filter = filter
+		})
+	end)
+	cmd:AddStringArg("group", { autocomplete = groupAutocomplete })
+	cmd:AddStringArg("command")
+	cmd:AddStringArg("filter")
+end)
+
+BSU.SetupCommand("cleargroupcmdtarget", function(cmd)
+	cmd:SetDescription("Clear an existing command target filter for a group")
+	cmd:SetCategory("moderation")
+	cmd:SetAccess(BSU.CMD_SUPERADMIN)
+	cmd:SetFunction(function(self, _, groupid, command)
+		checkGroupisValid(groupid)
+
+		if not BSU.GetCommandTarget(groupid, command) then error("Command target filter is not set on this group") end
+
+		BSU.RemoveCommandTarget(groupid, command)
+
+		self:BroadcastActionMsg("%caller% cleared a command target filter on the group %groupid% (%command%)", {
+			groupid = groupid,
+			command = command
+		})
+	end)
+	cmd:AddStringArg("group", { autocomplete = groupAutocomplete })
+	cmd:AddStringArg("command")
+end)
+
+BSU.SetupCommand("setgroupcmdlimit", function(cmd)
+	cmd:SetDescription("Set a command limit on a group")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, command, arg, min, max)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
+		checkGroupisValid(groupid)
 
-		if max < min then error("min cannot be less than max") end
+		if max < min then error("The min cannot be less than max") end
 
 		BSU.RegisterCommandLimit(groupid, command, arg, min, max)
 
@@ -620,15 +659,14 @@ BSU.SetupCommand("setcommandlimit", function(cmd)
 	cmd:AddNumberArg("max")
 end)
 
-BSU.SetupCommand("clearcommandlimit", function(cmd)
-	cmd:SetDescription("Clear a command limit")
+BSU.SetupCommand("cleargroupcmdlimit", function(cmd)
+	cmd:SetDescription("Clear an existing command limit on a group")
 	cmd:SetCategory("moderation")
 	cmd:SetAccess(BSU.CMD_SUPERADMIN)
 	cmd:SetFunction(function(self, _, groupid, command, arg)
-		local group = BSU.GetGroupByID(groupid)
-		if not group then error("Group does not exist") end
+		checkGroupisValid(groupid)
 
-		if not BSU.GetCommandLimit(groupid, command, arg) then error("No command limit assigned to this group and command arg") end
+		if not BSU.GetCommandLimit(groupid, command, arg) then error("Command limit is not set on this group") end
 
 		BSU.RemoveCommandLimit(groupid, command, arg)
 
